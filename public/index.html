@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 足球战术模拟器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #fff;
+            overflow-x: hidden;
+        }
+        
+        #app {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #scene-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+        }
+        
+        .ui-panel {
+            pointer-events: auto;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 12px;
+            padding: 15px;
+            margin: 10px 0;
+            backdrop-filter: blur(10px);
+        }
+        
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .score-display {
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+        }
+        
+        .timer {
+            font-size: 20px;
+            color: #ffd700;
+        }
+        
+        .bottom-panel {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        
+        button {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #3a8eef;
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        
+        .modal-content {
+            background: #2a2a4e;
+            padding: 30px;
+            border-radius: 16px;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+            width: 90%;
+        }
+        
+        .modal-header {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #ffd700;
+        }
+        
+        .team-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .team-card {
+            background: #3a3a5e;
+            padding: 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        
+        .team-card:hover {
+            border-color: #4a9eff;
+            transform: translateY(-3px);
+        }
+        
+        .team-card.selected {
+            border-color: #ffd700;
+            background: #4a4a6e;
+        }
+        
+        .formation-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        .formation-btn {
+            background: #3a3a5e;
+            padding: 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: center;
+            border: 2px solid transparent;
+        }
+        
+        .formation-btn:hover {
+            border-color: #4a9eff;
+        }
+        
+        .formation-btn.selected {
+            border-color: #ffd700;
+            background: #4a4a6e;
+        }
+        
+        .player-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .player-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #3a3a5e;
+            margin: 5px 0;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        .player-item:hover {
+            background: #4a4a6e;
+        }
+        
+        .player-item.selected {
+            background: #4a4a6e;
+            border-left: 3px solid #ffd700;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        .stats-bar {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin: 15px 0;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4a9eff;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="scene-container"></div>
+        
+        <div id="ui-overlay">
+            <div class="ui-panel top-bar">
+                <div class="score-display" id="score-display">
+                    <span id="home-score">0</span> - <span id="away-score">0</span>
+                </div>
+                <div class="timer" id="match-timer">00:00</div>
+                <div id="match-status">准备开始</div>
+                <div style="font-size:12px;color:#888;">拖拽旋转 · 滚轮缩放</div>
+            </div>
+            
+            <div class="ui-panel bottom-panel">
+                <button id="btn-team-select">选队</button>
+                <button id="btn-tactics">战术</button>
+                <button id="btn-start-match" disabled>开始比赛</button>
+                <button id="btn-substitutions" disabled>换人</button>
+                <button id="btn-pause" disabled>暂停</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Team Selection Modal -->
+    <div id="team-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">选择球队</div>
+            <div id="team-list" class="team-grid"></div>
+            <div style="text-align: center; margin-top: 20px;">
+                <button id="btn-confirm-team">确认选择</button>
+                <button id="btn-close-team" style="background: #666;">关闭</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Tactics Modal -->
+    <div id="tactics-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">战术设置</div>
+            <div id="formation-selection">
+                <h3>选择阵型</h3>
+                <div id="formation-grid" class="formation-grid"></div>
+            </div>
+            <div id="player-selection">
+                <h3>选择首发球员</h3>
+                <div id="starting-eleven" class="player-list"></div>
+            </div>
+            <div style="text-align: center; margin-top: 20px;">
+                <button id="btn-confirm-tactics">确认战术</button>
+                <button id="btn-close-tactics" style="background: #666;">关闭</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Substitution Modal -->
+    <div id="substitution-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">换人调整</div>
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <div class="stat-value" id="sub-remaining">3</div>
+                    <div class="stat-label">剩余换人</div>
+                </div>
+            </div>
+            <h3>场上球员</h3>
+            <div id="on-field" class="player-list"></div>
+            <h3>替补球员</h3>
+            <div id="on-bench" class="player-list"></div>
+            <div style="text-align: center; margin-top: 20px;">
+                <button id="btn-confirm-sub">执行换人</button>
+                <button id="btn-close-sub" style="background: #666;">关闭</button>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module" src="/main.js"></script>
+</body>
+</html>

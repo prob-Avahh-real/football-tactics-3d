@@ -1,0 +1,11 @@
+{
+  "appId": "com.skat.footballtactics3d",
+  "appName": "3D足球战术",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

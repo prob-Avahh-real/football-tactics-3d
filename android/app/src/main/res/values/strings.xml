@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">3D足球战术</string>
+    <string name="title_activity_main">3D足球战术</string>
+    <string name="package_name">com.skat.footballtactics3d</string>
+    <string name="custom_url_scheme">com.skat.footballtactics3d</string>
+</resources>
