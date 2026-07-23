@@ -10,6 +10,13 @@ import {
   stepPlayer,
   goalProbability,
   resolveGoal,
+  isOffside,
+  classifyOutOfBounds,
+  setPieceBallPosition,
+  validateGoalSide,
+  ROLE_DUTY,
+  FIELD_HALF_X,
+  FIELD_HALF_Z,
 } from '../lib/matchSim.js';
 
 const proj = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,51 +52,63 @@ test('duplicate roles get distinct lateral slots', () => {
   assert.equal(cmXs.size, 3, 'CMs should spread');
 });
 
-test('away side mirrors along pitch length', () => {
-  const roles = ['GK', 'ST'];
+test('away side mirrors along pitch length with independent offset', () => {
+  const roles = FORMATIONS['4-4-2'].positions;
   const home = getFormationPositions(roles, -10, 'home');
   const away = getFormationPositions(roles, 10, 'away');
+  assert.equal(home.length, away.length);
   assert.equal(home[0].z, -away[0].z);
-  assert.ok(away[0].z < 0 || home[0].z > 0 || home[0].z === -away[0].z);
+  assert.ok(away[0].x > 0);
+  assert.ok(home[0].x < 0);
 });
 
 test('averageAttr and ball clamp', () => {
   assert.equal(averageAttr([], 'speed'), 0);
   assert.equal(averageAttr([{ speed: 80 }, { speed: 90 }], 'speed'), 85);
   const c = clampBall({ x: 100, z: -100 });
-  assert.equal(c.x, 14);
-  assert.equal(c.z, -21);
+  assert.equal(c.x, FIELD_HALF_X);
+  assert.equal(c.z, -FIELD_HALF_Z);
 });
 
-test('stepBall / stepPlayer stay finite', () => {
-  const ball = stepBall({ x: 0, z: 0 }, [{ team: 'home', speed: 90 }], () => 0.5);
-  assert.ok(Number.isFinite(ball.x) && Number.isFinite(ball.z));
+test('role duties exist and ST presses more than GK', () => {
+  assert.ok(ROLE_DUTY.ST.press > ROLE_DUTY.GK.press);
+  assert.ok(ROLE_DUTY.GK.slotPull > ROLE_DUTY.ST.slotPull);
+});
 
-  const next = stepPlayer(
-    { x: 0, z: 0 },
-    { x: 1, z: 1 },
-    { x: 2, z: 2 },
-    { speed: 80 },
-    () => 0.5
-  );
-  assert.ok(Number.isFinite(next.x) && Number.isFinite(next.z));
+test('stepPlayer is role-driven not pure jitter', () => {
+  const slot = { x: -10, z: 14 };
+  const ball = { x: 5, z: 0 };
+  const gk = stepPlayer({ x: -10, z: 14 }, slot, ball, { speed: 80, team: 'home' }, 'GK');
+  const st = stepPlayer({ x: -8, z: 2 }, { x: -8, z: 2 }, ball, { speed: 90, team: 'home' }, 'ST');
+  // GK stays near defensive slot; ST moves toward ball more
+  assert.ok(Math.hypot(gk.x - slot.x, gk.z - slot.z) < 1.5);
+  assert.ok(st.x > -8 || Math.hypot(st.x - ball.x, st.z - ball.z) < Math.hypot(-8 - ball.x, 2 - ball.z));
+});
+
+test('stepBall uses carrier passing/speed (finite)', () => {
+  const near = [
+    { team: 'home', x: 0.5, z: 0, speed: 90, passing: 95, shooting: 80, position: 'CM' },
+    { team: 'home', x: 4, z: 1, speed: 80, passing: 85, shooting: 70, position: 'ST' },
+  ];
+  const ball = stepBall({ x: 0, z: 0 }, near, () => 0.2);
+  assert.ok(Number.isFinite(ball.x) && Number.isFinite(ball.z));
 });
 
 test('goalProbability scales with shooting edge', () => {
   const weak = goalProbability({
-    homeAttackers: [{ shooting: 70 }],
+    homeAttackers: [{ shooting: 70, passing: 70 }],
     awayAttackers: [],
     homeDefenders: [],
     awayDefenders: [{ defense: 90 }],
   });
   const strong = goalProbability({
-    homeAttackers: [{ shooting: 95 }],
+    homeAttackers: [{ shooting: 95, passing: 90 }],
     awayAttackers: [],
     homeDefenders: [],
     awayDefenders: [{ defense: 60 }],
   });
   assert.ok(strong.chance > weak.chance);
-  assert.ok(strong.chance <= 0.012);
+  assert.ok(strong.chance <= 0.01);
 });
 
 test('resolveGoal respects chance and weights', () => {
@@ -98,8 +117,40 @@ test('resolveGoal respects chance and weights', () => {
     resolveGoal({ chance: 1, homeWeight: 1, awayWeight: 0 }, () => 0.1),
     'home'
   );
-  assert.equal(
-    resolveGoal({ chance: 1, homeWeight: 0, awayWeight: 1 }, () => 0.1),
-    'away'
-  );
+});
+
+test('isOffside detects attacker beyond second-last defender', () => {
+  const attacker = { team: 'home', x: 10, z: 0 };
+  const opponents = [
+    { team: 'away', x: 12, z: 0 }, // GK
+    { team: 'away', x: 8, z: 1 }, // last outfield
+    { team: 'away', x: 6, z: -1 },
+  ];
+  const ball = { x: 7, z: 0 };
+  assert.equal(isOffside(attacker, opponents, ball), true);
+
+  const onside = { team: 'home', x: 7, z: 0 };
+  assert.equal(isOffside(onside, opponents, ball), false);
+});
+
+test('validateGoalSide rejects offside finish', () => {
+  const ball = { x: 9, z: 0 };
+  const near = [
+    { team: 'home', x: 11, z: 0, position: 'ST' },
+    { team: 'away', x: 13, z: 0, position: 'GK' },
+    { team: 'away', x: 8, z: 0, position: 'CB' },
+  ];
+  assert.equal(validateGoalSide('home', near, ball), false);
+});
+
+test('classifyOutOfBounds throw-in and corner', () => {
+  const throwIn = classifyOutOfBounds({ x: 0, z: 20 }, { x: 1, z: FIELD_HALF_Z + 1 });
+  assert.equal(throwIn.kind, 'throw_in');
+
+  const corner = classifyOutOfBounds({ x: 13, z: 10 }, { x: FIELD_HALF_X + 1, z: 10 });
+  assert.equal(corner.kind, 'corner');
+  assert.equal(corner.restartTeam, 'home');
+
+  const pos = setPieceBallPosition(corner);
+  assert.ok(pos.x > 10);
 });

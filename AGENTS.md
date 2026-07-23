@@ -24,3 +24,5 @@ npm run apk:debug      # sync + assembleDebug（JDK 17）
 
 - Web：`npm test` 绿且 `npm run build` 产出 `www/`
 - Android：`android/` 存在，`capacitor.config.json` 的 `webDir` 为 `www/`，`npm run sync:android` 成功
+- CI：`.github/workflows/ci.yml`（test + build + cap sync）
+- 文档：README + ROADMAP.md

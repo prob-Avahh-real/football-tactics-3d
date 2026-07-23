@@ -14,3 +14,10 @@ test('capacitor android present with www webDir', () => {
   assert.equal(cap.webDir, 'www');
   assert.ok(fs.existsSync(path.join(proj, 'android')), 'missing android/');
 });
+
+test('docs and CI present', () => {
+  assert.ok(fs.existsSync(path.join(proj, 'README.md')));
+  assert.ok(fs.existsSync(path.join(proj, 'ROADMAP.md')));
+  assert.ok(fs.existsSync(path.join(proj, '.gitignore')));
+  assert.ok(fs.existsSync(path.join(proj, '.github/workflows/ci.yml')));
+});

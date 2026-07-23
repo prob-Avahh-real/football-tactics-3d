@@ -25,7 +25,7 @@ npm run apk:debug      # sync + assembleDebug（需 JDK 17）
 3. **开始比赛** — 上下半场、暂停、换人（最多 3 次）；中场可改战术
 4. **相机** — 拖拽旋转、滚轮缩放
 
-比赛推进会参考球员速度/射门/防守，阵型同名位置会横向错开。
+比赛推进会参考球员速度/射门/传球/防守；阵型同名位置横向错开；客队独立阵型；职责跑位；开球冻结、界外/角球、简化越位。
 
 ## 结构
 
@@ -35,8 +35,16 @@ npm run apk:debug      # sync + assembleDebug（需 JDK 17）
 | `lib/` | 阵型与比赛纯逻辑（可单测） |
 | `www/` | `npm run build` 产物 |
 | `android/` | Capacitor Android（`com.skat.footballtactics3d`） |
+| `.github/workflows/ci.yml` | CI：test + build + `cap sync` |
+
+## 文档
+
+- [ROADMAP.md](ROADMAP.md) — 已完成 / 下一步
+- [AGENTS.md](AGENTS.md) — 用途、平台、Done 标准
+- [CAPACITOR.md](CAPACITOR.md) — Android 快捷说明
 
 ## Done
 
 - Web：`npm test` 绿且 `npm run build` 产出 `www/`
 - Android：`npm run sync:android` 成功（APK 用 `npm run apk:debug`，需 JDK 17）
+- CI：push/PR 跑 test + build + Capacitor gate

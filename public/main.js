@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FORMATIONS, getFormationPositions } from '../lib/formations.js';
-import { stepBall, stepPlayer, goalProbability, resolveGoal } from '../lib/matchSim.js';
+import { stepBall, stepPlayer, goalProbability, resolveGoal, classifyOutOfBounds, setPieceBallPosition, kickoffBallPosition, validateGoalSide, FIELD_HALF_X } from '../lib/matchSim.js';
 
 // Game State
 const gameState = {
@@ -20,7 +20,9 @@ const gameState = {
     awayLineup: [],
     selectedPlayerOut: null,
     selectedPlayerIn: null,
-    kickoffPending: false,
+    kickoffFrames: 0,
+    setPieceFreeze: 0,
+    lastSetPiece: null,
 };
 
 const teams = [
@@ -178,7 +180,7 @@ function createPenaltyArea(x, y, z) {
     scene.add(area);
 }
 
-function createPlayerMesh(player, x, z, color, team) {
+function createPlayerMesh(player, x, z, color, team, role) {
     const geometry = new THREE.CylinderGeometry(0.5, 0.5, 1.5, 8);
     const material = new THREE.MeshLambertMaterial({ color });
     const mesh = new THREE.Mesh(geometry, material);
@@ -187,6 +189,7 @@ function createPlayerMesh(player, x, z, color, team) {
     mesh.userData = {
         player,
         team,
+        role: role || player.position,
         originalPosition: { x, z },
     };
     scene.add(mesh);
@@ -368,7 +371,8 @@ function createPlayersOnField() {
 
     gameState.startingEleven.forEach((player, i) => {
         const pos = homePositions[i];
-        const mesh = createPlayerMesh(player, pos.x, pos.z, gameState.homeTeam.color, 'home');
+        const role = homeRoles[i];
+        const mesh = createPlayerMesh(player, pos.x, pos.z, gameState.homeTeam.color, 'home', role);
         playerMeshes.push(mesh);
     });
 
@@ -378,7 +382,8 @@ function createPlayersOnField() {
 
     awayPlayers.forEach((player, i) => {
         const pos = awayPositions[i];
-        const mesh = createPlayerMesh(player, pos.x, pos.z, gameState.awayTeam.color, 'away');
+        const role = awayRoles[i];
+        const mesh = createPlayerMesh(player, pos.x, pos.z, gameState.awayTeam.color, 'away', role);
         playerMeshes.push(mesh);
     });
 }
@@ -386,7 +391,8 @@ function createPlayersOnField() {
 /** Reset ball + players to formation for kickoff / after goal / half. */
 function resetKickoff(statusText) {
     if (!ballMesh) createBall();
-    ballMesh.position.set(0, 0.3, 0);
+    const c = kickoffBallPosition();
+    ballMesh.position.set(c.x, 0.3, c.z);
 
     playerMeshes.forEach((mesh) => {
         const slot = mesh.userData.originalPosition;
@@ -394,10 +400,20 @@ function resetKickoff(statusText) {
         mesh.position.z = slot.z;
     });
 
-    gameState.kickoffPending = true;
+    gameState.kickoffFrames = 90; // ~1.5s freeze at centre
+    gameState.setPieceFreeze = 0;
+    gameState.lastSetPiece = null;
     if (statusText) {
         document.getElementById('match-status').textContent = statusText;
     }
+}
+
+function applySetPiece(piece, label) {
+    const pos = setPieceBallPosition(piece);
+    ballMesh.position.set(pos.x, 0.3, pos.z);
+    gameState.lastSetPiece = piece;
+    gameState.setPieceFreeze = 45;
+    document.getElementById('match-status').textContent = label;
 }
 
 function startMatch() {
@@ -418,8 +434,7 @@ function startMatch() {
     document.getElementById('btn-tactics').disabled = true;
     document.getElementById('btn-team-select').disabled = true;
 
-    resetKickoff('开球 — 上半场进行中');
-    gameState.kickoffPending = false;
+    resetKickoff('开球');
 }
 
 function togglePause() {
@@ -430,9 +445,7 @@ function togglePause() {
         document.getElementById('btn-tactics').disabled = true;
         createPlayersOnField();
         resetKickoff('下半场开球');
-        gameState.kickoffPending = false;
         document.getElementById('btn-pause').textContent = '暂停';
-        document.getElementById('match-status').textContent = '下半场进行中';
         return;
     }
 
@@ -463,6 +476,10 @@ function playersNearBall(radius = 8) {
         .map((mesh) => ({
             ...mesh.userData.player,
             team: mesh.userData.team,
+            role: mesh.userData.role,
+            position: mesh.userData.role || mesh.userData.player.position,
+            x: mesh.position.x,
+            z: mesh.position.z,
         }));
 }
 
@@ -475,6 +492,25 @@ function updateMatch() {
     const seconds = Math.floor((gameState.matchTime % 1) * 60);
     document.getElementById('match-timer').textContent =
         `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+    if (gameState.kickoffFrames > 0) {
+        gameState.kickoffFrames--;
+        // Hold shape; only allow slight approach by kickoff side ST
+        simulatePlayerMovement({ kickoff: true });
+        if (gameState.kickoffFrames === 0) {
+            document.getElementById('match-status').textContent = getMatchStatusText();
+        }
+        return;
+    }
+
+    if (gameState.setPieceFreeze > 0) {
+        gameState.setPieceFreeze--;
+        simulatePlayerMovement({ setPiece: gameState.lastSetPiece });
+        if (gameState.setPieceFreeze === 0) {
+            document.getElementById('match-status').textContent = getMatchStatusText();
+        }
+        return;
+    }
 
     simulateBallMovement();
     simulatePlayerMovement();
@@ -502,27 +538,85 @@ function updateMatch() {
 function simulateBallMovement() {
     if (!ballMesh) return;
 
-    const near = playersNearBall(7);
-    const next = stepBall(
-        { x: ballMesh.position.x, z: ballMesh.position.z },
-        near
-    );
+    const prev = { x: ballMesh.position.x, z: ballMesh.position.z };
+    const near = playersNearBall(8);
+    const next = stepBall(prev, near);
+
+    // Goal mouth crossed → try score path instead of set piece
+    if (Math.abs(next.x) > FIELD_HALF_X && Math.abs(next.z) <= 3.5) {
+        ballMesh.position.x = Math.sign(next.x) * FIELD_HALF_X;
+        ballMesh.position.z = next.z;
+        const side = next.x > 0 ? 'home' : 'away';
+        if (validateGoalSide(side, near, next)) {
+            simulateGoal(side);
+        } else {
+            document.getElementById('match-status').textContent = '越位在先，进球无效';
+            applySetPiece(
+                {
+                    kind: 'goal_kick',
+                    restartTeam: side === 'home' ? 'away' : 'home',
+                    x: next.x,
+                    z: 0,
+                },
+                '越位 — 球门球'
+            );
+        }
+        return;
+    }
+
+    const piece = classifyOutOfBounds(prev, next);
+    if (piece) {
+        const labels = {
+            throw_in: '界外球',
+            corner: '角球',
+            goal_kick: '球门球',
+        };
+        applySetPiece(piece, labels[piece.kind] || '定位球');
+        return;
+    }
+
     ballMesh.position.x = next.x;
     ballMesh.position.z = next.z;
     ballMesh.rotation.x += 0.08;
     ballMesh.rotation.z += 0.08;
 }
 
-function simulatePlayerMovement() {
+function simulatePlayerMovement(opts = {}) {
     if (!ballMesh) return;
     const ball = { x: ballMesh.position.x, z: ballMesh.position.z };
 
     playerMeshes.forEach((mesh) => {
+        const player = {
+            ...mesh.userData.player,
+            team: mesh.userData.team,
+        };
+        const role = mesh.userData.role;
+
+        if (opts.kickoff) {
+            // Stay near slot during kickoff; ST may creep toward centre
+            if (role === 'ST') {
+                const next = stepPlayer(
+                    { x: mesh.position.x, z: mesh.position.z },
+                    mesh.userData.originalPosition,
+                    ball,
+                    player,
+                    role
+                );
+                mesh.position.x = mesh.userData.originalPosition.x * 0.7 + next.x * 0.3;
+                mesh.position.z = mesh.userData.originalPosition.z * 0.7 + next.z * 0.3;
+            } else {
+                mesh.position.x = mesh.userData.originalPosition.x;
+                mesh.position.z = mesh.userData.originalPosition.z;
+            }
+            return;
+        }
+
         const next = stepPlayer(
             { x: mesh.position.x, z: mesh.position.z },
             mesh.userData.originalPosition,
             ball,
-            mesh.userData.player
+            player,
+            role
         );
         mesh.position.x = next.x;
         mesh.position.z = next.z;
@@ -531,10 +625,15 @@ function simulatePlayerMovement() {
 
 function maybeScore() {
     const near = playersNearBall(9);
+    const ball = { x: ballMesh.position.x, z: ballMesh.position.z };
     const homeAttackers = near.filter((p) => p.team === 'home' && p.position !== 'GK');
     const awayAttackers = near.filter((p) => p.team === 'away' && p.position !== 'GK');
-    const homeDefenders = near.filter((p) => p.team === 'home' && ['GK', 'CB', 'LB', 'RB', 'CDM'].includes(p.position));
-    const awayDefenders = near.filter((p) => p.team === 'away' && ['GK', 'CB', 'LB', 'RB', 'CDM'].includes(p.position));
+    const homeDefenders = near.filter((p) =>
+        p.team === 'home' && ['GK', 'CB', 'LB', 'RB', 'CDM'].includes(p.position)
+    );
+    const awayDefenders = near.filter((p) =>
+        p.team === 'away' && ['GK', 'CB', 'LB', 'RB', 'CDM'].includes(p.position)
+    );
 
     const probs = goalProbability({
         homeAttackers,
@@ -543,7 +642,12 @@ function maybeScore() {
         awayDefenders,
     });
     const side = resolveGoal(probs);
-    if (side) simulateGoal(side);
+    if (!side) return;
+    if (!validateGoalSide(side, near, ball)) {
+        document.getElementById('match-status').textContent = '越位，进攻无效';
+        return;
+    }
+    simulateGoal(side);
 }
 
 function simulateGoal(side) {
@@ -558,8 +662,7 @@ function simulateGoal(side) {
     }
 
     createPlayersOnField();
-    resetKickoff(isHomeGoal ? '主队进球！开球继续' : '客队进球！开球继续');
-    gameState.kickoffPending = false;
+    resetKickoff(isHomeGoal ? '主队进球！开球' : '客队进球！开球');
 
     document.getElementById('score-display').style.color = isHomeGoal ? '#4a9eff' : '#ff6b6b';
     setTimeout(() => {
