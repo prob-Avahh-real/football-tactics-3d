@@ -21,3 +21,11 @@ android/local.properties
 .env
 .env.*
 !.env.example
+
+# Build, cache & secret exclusions
+.build/
+DerivedData/
+.gradle/
+__pycache__/
+.venv/
+*.ipa
